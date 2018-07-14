@@ -1,7 +1,7 @@
 CC = gcc
 CXX = g++
 
-INCLUDES = 
+INCLUDES =
 
 CFLAGS = -g -Wall $(INCLUDES)
 CXXFLAGS = -g -Wall $(INCLUDES)
@@ -15,7 +15,7 @@ LDLIBS = -lm -ledit
 #
 #
 
-parser: parser.o mpc.o
+lispy: lispy.o mpc.o
 
 # Implicit rules to build .o files:
 #
@@ -23,7 +23,7 @@ parser: parser.o mpc.o
 #
 #
 
-parser.o: parser.c mpc.h
+lispy.o: lispy.c mpc.h
 
 mpc.o: mpc.c mpc.h
 
@@ -34,11 +34,11 @@ mpc.o: mpc.c mpc.h
 # it's a "phony" target.
 
 .PHONY: clean
-clean: 
-	rm -f *.o *~ a.out core parser
+clean:
+	rm -f *.o *~ a.out core lispy
 
 # "all" target is useful if your Makefile builds multiple programs.
 # Here we'll have it first do "clean", and rebuild the main target.
 
 .PHONY: all
-all: clean parser
+all: clean lispy
