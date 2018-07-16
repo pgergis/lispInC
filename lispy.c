@@ -48,6 +48,31 @@ enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
 typedef lval*(*lbuiltin)(lenv*, lval*);
 
+#define LASSERT(args, cond, fmt, ...)             \
+    if (!(cond)) {                                \
+        lval *err = lval_err(fmt, ##__VA_ARGS__); \
+        lval_del(args);                           \
+        return err;                               \
+    }
+
+#define LASSERT_NUM_ARGS(func, args, num)                           \
+    LASSERT(args, args->count == num,                               \
+            "Function '%s' passed incorrect number of arguments! "  \
+            "Got %i, Expected %i.",                                 \
+            func, args->count, num);
+
+char *ltype_name(int t);
+#define LASSERT_TYPE(func, args, index, expect)                         \
+    LASSERT(args, args->cell[index]->type == expect,                    \
+            "Function '%s' passed incorrect type! "                     \
+            "Got %s, Expected %s.",                                     \
+            func, ltype_name(args->cell[index]->type), ltype_name(expect));
+
+#define LASSERT_NON_EMPTY(func, args, index)            \
+    LASSERT(args, args->cell[index]->count != 0,        \
+            "Function '%s' passed {} for argument %i."  \
+            func, index);
+
 /* Declare New lval (read: lisp value) Struct */
 struct lval {
     int type;
@@ -224,6 +249,70 @@ lval *lval_pop(lval *v, int i) {
 lval *lval_take(lval *v, int i) {
     lval *x = lval_pop(v, i);
     lval_del(v);
+    return x;
+}
+
+int lval_eq(lval *x ,lval *y) {
+
+    /* Different Types are always unequal */
+    if(x->type != y->type) { return 0; }
+
+    /* Compare based on type */
+    switch(x->type) {
+        /* Compare number values */
+        case LVAL_NUM: return(x->num == y->num);
+
+        /* Compare strings */
+        case LVAL_ERR: return(strcmp(x->err, y->err) == 0);
+        case LVAL_SYM: return(strcmp(x->sym, y->sym) == 0);
+
+        /* If builtin, compare; else, compare formals and body */
+        case LVAL_FUN:
+            if(x->builtin || y->builtin) {
+                return x->builtin == y->builtin;
+            } else {
+                return lval_eq(x->formals, y->formals)
+                    && lval_eq(x->body, y->body);
+            }
+
+        /* If list, compare every element */
+        case LVAL_QEXPR:
+        case LVAL_SEXPR:
+            if(x->count != y->count) { return 0; }
+            for(int i = 0; i < x->count; i++) {
+                /* If any element not equal, then whole list is not equal */
+                if(!lval_eq(x->cell[i], y->cell[i])) { return 0; }
+            }
+        /* Otherwise, lists must be equal */
+            return 1;
+        break;
+    }
+    return 0;
+}
+
+lval *lval_eval(lenv *e, lval *v);
+
+lval *builtin_if(lenv *e, lval *a) {
+    LASSERT_NUM_ARGS("if", a, 3);
+    LASSERT_TYPE("if", a, 0, LVAL_NUM);
+    LASSERT_TYPE("if", a, 1, LVAL_QEXPR);
+    LASSERT_TYPE("if", a, 2, LVAL_QEXPR);
+
+    /* Mark both expressions as evaluable */
+    lval *x;
+    a->cell[1]->type = LVAL_SEXPR;
+    a->cell[2]->type = LVAL_SEXPR;
+
+    if(a->cell[0]->num) {
+        /* If condition is true, evaluate first expression */
+        x = lval_eval(e, lval_pop(a, 1));
+    } else {
+        /* Otherwise evaluate second expression */
+        x = lval_eval(e, lval_pop(a, 2));
+    }
+
+    /* Delete argument list and return */
+    lval_del(a);
     return x;
 }
 
@@ -432,30 +521,6 @@ lval *lval_lambda(lval *formals, lval *body) {
     return v;
 }
 
-#define LASSERT(args, cond, fmt, ...) \
-    if (!(cond)) { \
-        lval *err = lval_err(fmt, ##__VA_ARGS__); \
-        lval_del(args); \
-        return err; \
-    }
-
-#define LASSERT_NUM_ARGS(func, args, num)       \
-    LASSERT(args, args->count == num, \
-        "Function '%s' passed incorrect number of arguments! " \
-        "Got %i, Expected %i.", \
-            func, args->count, 1);
-
-#define LASSERT_TYPE(func, args, index, expect) \
-    LASSERT(args, args->cell[index]->type == expect, \
-            "Function '%s' passed incorrect type! " \
-            "Got %s, Expected %s.", \
-            func, ltype_name(args->cell[index]->type), ltype_name(expect));
-
-#define LASSERT_NON_EMPTY(func, args, index) \
-    LASSERT(args, args->cell[index]->count != 0, \
-            "Function '%s' passed {} for argument %i." \
-            func, index);
-
 lval *builtin_lambda(lenv *e, lval *a) {
     /* Check Two arguments, each of which are Q-Expressions */
     LASSERT_NUM_ARGS("\\", a, 2);
@@ -516,9 +581,9 @@ lval *builtin_op(lenv *e, lval *a, char *op) {
         /* Pop the next element */
         lval *y = lval_pop(a, 0);
 
-        if (strcmp(op, "+") == 0) { x->num += y->num;     }
-        if (strcmp(op, "-") == 0) { x->num -= y->num;     }
-        if (strcmp(op, "*") == 0) { x->num *= y->num;     }
+        if (strcmp(op, "+") == 0) { x->num += y->num; }
+        if (strcmp(op, "-") == 0) { x->num -= y->num; }
+        if (strcmp(op, "*") == 0) { x->num *= y->num; }
         if (strcmp(op, "/") == 0) {
             if (y->num == 0) {
                 lval_del(x); lval_del(y);
@@ -531,6 +596,72 @@ lval *builtin_op(lenv *e, lval *a, char *op) {
     }
 
     lval_del(a); return x;
+}
+
+lval *builtin_ord(lenv *e, lval *a, char *op);
+
+lval *builtin_lt(lenv *e, lval *a) {
+    return builtin_ord(e, a, "<");
+}
+
+lval *builtin_gt(lenv *e, lval *a) {
+    return builtin_ord(e, a, ">");
+}
+
+lval *builtin_ge(lenv *e, lval *a) {
+    return builtin_ord(e, a, ">=");
+}
+
+lval *builtin_le(lenv *e, lval *a) {
+    return builtin_ord(e, a, "<=");
+}
+
+lval *builtin_ord(lenv *e, lval *a, char *op) {
+
+    /* Can only compare two things at once */
+    LASSERT_NUM_ARGS(op, a, 2);
+
+    /* For now, only supports numbers (TODO: Extend to chars / strings) */
+    LASSERT_TYPE(op, a, 0, LVAL_NUM);
+    LASSERT_TYPE(op, a, 1, LVAL_NUM);
+
+    /* Pop the args */
+    lval *x = lval_pop(a, 0);
+    lval *y = lval_pop(a, 0);
+
+    int r = -1;
+
+    if(strcmp(op, "<") == 0)  { r = x->num < y->num;  }
+    if(strcmp(op, ">") == 0)  { r = x->num > y->num;  }
+    if(strcmp(op, "==") == 0) { r = x->num == y->num; }
+    if(strcmp(op, "!=") == 0) { r = x->num != y->num; }
+    if(strcmp(op, "<=") == 0) { r = x->num <= y->num; }
+    if(strcmp(op, ">=") == 0) { r = x->num >= y->num; }
+
+    lval_del(x); lval_del(y); lval_del(a);
+    if(r == -1) { return lval_err("Comparison failed!"); }
+    return lval_num(r);
+}
+
+lval *builtin_cmp(lenv *e, lval *a, char *op) {
+    LASSERT_NUM_ARGS(op, a, 2);
+    int r;
+    if(strcmp(op, "==") == 0) {
+        r = lval_eq(a->cell[0], a->cell[1]);
+    }
+    if(strcmp(op, "!=") == 0) {
+        r = !lval_eq(a->cell[0], a->cell[1]);
+    }
+    lval_del(a);
+    return lval_num(r);
+}
+
+lval *builtin_eq(lenv *e, lval *a) {
+    return builtin_cmp(e, a, "==");
+}
+
+lval *builtin_ne(lenv *e, lval *a) {
+    return builtin_cmp(e, a, "!=");
 }
 
 lval *builtin_head(lenv *e, lval *a) {
@@ -595,8 +726,6 @@ lval *lval_join(lval *x, lval *y) {
     lval_del(y);
     return x;
 }
-
-lval *lval_eval(lenv *e, lval *v);
 
 lval *builtin_eval(lenv *e, lval *a) {
     LASSERT_NUM_ARGS("eval", a, 1);
@@ -677,6 +806,21 @@ void lenv_add_builtins(lenv *e) {
     lenv_add_builtin(e, "sub", builtin_sub);
     lenv_add_builtin(e, "mul", builtin_mul);
     lenv_add_builtin(e, "div", builtin_div);
+
+    /* Comparison Functions */
+    lenv_add_builtin(e, "if", builtin_if);
+    lenv_add_builtin(e, ">",  builtin_gt);
+    lenv_add_builtin(e, "<",  builtin_lt);
+    lenv_add_builtin(e, "==", builtin_eq);
+    lenv_add_builtin(e, "!=", builtin_ne);
+    lenv_add_builtin(e, ">=", builtin_ge);
+    lenv_add_builtin(e, "<=", builtin_le);
+    lenv_add_builtin(e, "gt", builtin_gt);
+    lenv_add_builtin(e, "lt", builtin_lt);
+    lenv_add_builtin(e, "eq", builtin_eq);
+    lenv_add_builtin(e, "ne", builtin_ne);
+    lenv_add_builtin(e, "ge", builtin_ge);
+    lenv_add_builtin(e, "le", builtin_le);
 
     /* Variable Functions */
     lenv_add_builtin(e, "def", builtin_def);
@@ -865,8 +1009,8 @@ int main (int argc, char *argv[]) {
             mpc_ast_delete(r.output);
         } else {
             /* Otherwise, print the error */
-            mpc_err_print(r.output);
-            mpc_err_delete(r.output);
+            mpc_err_print(r.error);
+            mpc_err_delete(r.error);
         }
 
         /* Free retrieved input */
