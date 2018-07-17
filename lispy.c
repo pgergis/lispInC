@@ -806,7 +806,7 @@ lval *builtin_fun(lenv *e, lval *a) {
     fun = lval_add(fun, fun_name);
     fun = lval_add(fun, fun_def);
 
-    /* lval_del(a); lval_del(syms); lval_del(body); */
+    lval_del(a);
     return builtin_def(e, fun);
 }
 
