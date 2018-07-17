@@ -290,32 +290,6 @@ int lval_eq(lval *x ,lval *y) {
     return 0;
 }
 
-lval *lval_eval(lenv *e, lval *v);
-
-lval *builtin_if(lenv *e, lval *a) {
-    LASSERT_NUM_ARGS("if", a, 3);
-    LASSERT_TYPE("if", a, 0, LVAL_NUM);
-    LASSERT_TYPE("if", a, 1, LVAL_QEXPR);
-    LASSERT_TYPE("if", a, 2, LVAL_QEXPR);
-
-    /* Mark both expressions as evaluable */
-    lval *x;
-    a->cell[1]->type = LVAL_SEXPR;
-    a->cell[2]->type = LVAL_SEXPR;
-
-    if(a->cell[0]->num) {
-        /* If condition is true, evaluate first expression */
-        x = lval_eval(e, lval_pop(a, 1));
-    } else {
-        /* Otherwise evaluate second expression */
-        x = lval_eval(e, lval_pop(a, 2));
-    }
-
-    /* Delete argument list and return */
-    lval_del(a);
-    return x;
-}
-
 void lval_print(lval *v);
 
 void lval_expr_print(lval *v, char open, char close) {
@@ -542,6 +516,33 @@ lval *builtin_lambda(lenv *e, lval *a) {
     return lval_lambda(formals, body);
 
 }
+
+lval *lval_eval(lenv *e, lval *v);
+
+lval *builtin_if(lenv *e, lval *a) {
+    LASSERT_NUM_ARGS("if", a, 3);
+    LASSERT_TYPE("if", a, 0, LVAL_NUM);
+    LASSERT_TYPE("if", a, 1, LVAL_QEXPR);
+    LASSERT_TYPE("if", a, 2, LVAL_QEXPR);
+
+    /* Mark both expressions as evaluable */
+    lval *x;
+    a->cell[1]->type = LVAL_SEXPR;
+    a->cell[2]->type = LVAL_SEXPR;
+
+    if(a->cell[0]->num) {
+        /* If condition is true, evaluate first expression */
+        x = lval_eval(e, lval_pop(a, 1));
+    } else {
+        /* Otherwise evaluate second expression */
+        x = lval_eval(e, lval_pop(a, 2));
+    }
+
+    /* Delete argument list and return */
+    lval_del(a);
+    return x;
+}
+
 lval *builtin_op(lenv *e, lval *a, char *op);
 
 lval *builtin_add(lenv *e, lval *a) {
@@ -747,7 +748,7 @@ lval *builtin_put(lenv *e, lval *a) {
 }
 
 lval *builtin_var(lenv *e, lval *a, char *func) {
-    LASSERT_TYPE("def", a, 0, LVAL_QEXPR);
+    LASSERT_TYPE(func, a, 0, LVAL_QEXPR);
 
     /* First argument is symbol list */
     lval *syms = a->cell[0];
@@ -780,6 +781,33 @@ lval *builtin_var(lenv *e, lval *a, char *func) {
 
     lval_del(a);
     return lval_sexpr();
+}
+
+lval *builtin_fun(lenv *e, lval *a) {
+    LASSERT_NUM_ARGS("fun", a, 2);
+    LASSERT_TYPE("fun", a, 0, LVAL_QEXPR);
+    LASSERT_TYPE("fun", a, 1, LVAL_QEXPR);
+
+    /* First argument gives us the fn name and args;
+     * Second gives us the body */
+
+    lval *syms = lval_pop(a, 0);
+    lval *body = lval_pop(a, 0);
+
+    lval *fun_name = lval_qexpr();
+    fun_name = lval_add(fun_name, lval_pop(syms, 0));
+
+    lval *fun_def = lval_qexpr();
+    fun_def = lval_add(fun_def, syms);
+    fun_def = lval_add(fun_def, body);
+    fun_def = builtin_lambda(e, fun_def);
+
+    lval *fun = lval_qexpr();
+    fun = lval_add(fun, fun_name);
+    fun = lval_add(fun, fun_def);
+
+    /* lval_del(a); lval_del(syms); lval_del(body); */
+    return builtin_def(e, fun);
 }
 
 void lenv_add_builtin(lenv *e, char *name, lbuiltin func) {
@@ -824,6 +852,7 @@ void lenv_add_builtins(lenv *e) {
 
     /* Variable Functions */
     lenv_add_builtin(e, "def", builtin_def);
+    lenv_add_builtin(e, "fun", builtin_fun);
     lenv_add_builtin(e, "=", builtin_put);
     lenv_add_builtin(e, "\\", builtin_lambda);
 }
